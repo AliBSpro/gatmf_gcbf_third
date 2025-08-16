@@ -63,22 +63,82 @@ def qp_teacher(u_nom, A, b, u_min=-1.0, u_max=1.0, rho=200.0):
                 x = solver.results.x
                 sol = x[:m]
 
+
             elif _BACKEND == "osqp":
+
                 import osqp as osqp
-                P = np.eye(m+1); P[-1,-1] = rho
-                q = np.zeros((m+1,)); q[:m] = -ui
-                # OSQP 采用 l <= A x <= u
-                A1 = np.hstack([-Ai, -np.ones((K,1))]); l1 = -np.inf*np.ones((K,)); u1 = (-bi_vec).flatten()
-                A2 = np.vstack([np.hstack([ np.eye(m), np.zeros((m,1)) ]),
-                                np.hstack([-np.eye(m), np.zeros((m,1)) ]),
-                                np.hstack([ np.zeros((1,m)), np.array([[1.0]]) ])])
-                l2 = np.hstack([ np.full((m,), u_min), np.full((m,), -u_max), 0.0 ])
-                u2 = np.hstack([ np.full((m,), u_max), np.full((m,), -u_min), np.inf ])
-                A_osqp = np.vstack([A1, A2]); l_osqp = np.hstack([l1, l2]); u_osqp = np.hstack([u1, u2])
+
+                from scipy import sparse
+
+                # ---- 1) P 必须是稀疏 CSC，且 float64 ----
+
+                # P = diag([1,...,1, rho])  (大小 m+1)
+
+                P = sparse.diags([1.0] * m + [float(rho)], format="csc", dtype=np.float64)
+
+                # ---- 2) q 必须是一维 float64 向量 ----
+
+                ui64 = ui.astype(np.float64, copy=False)
+
+                q = np.zeros((m + 1,), dtype=np.float64)
+
+                q[:m] = -ui64
+
+                # ---- 3) A 也必须是 CSC 稀疏矩阵（float64），l/u 是一维 float64 ----
+
+                A1 = np.hstack([-Ai, -np.ones((K, 1), dtype=np.float64)])
+
+                l1 = -np.inf * np.ones((K,), dtype=np.float64)
+
+                u1 = (-bi_vec).flatten().astype(np.float64, copy=False)
+
+                A2 = np.vstack([
+
+                    np.hstack([np.eye(m, dtype=np.float64), np.zeros((m, 1), dtype=np.float64)]),
+
+                    np.hstack([-np.eye(m, dtype=np.float64), np.zeros((m, 1), dtype=np.float64)]),
+
+                    np.hstack([np.zeros((1, m), dtype=np.float64), np.array([[1.0]], dtype=np.float64)])
+
+                ])
+
+                l2 = np.hstack([np.full((m,), -1.0 * u_min, dtype=np.float64)])  # 注意：下面用上下界统一到 l/u
+
+                u2 = np.hstack([np.full((m,), 1.0 * u_max, dtype=np.float64)])
+
+                # 实际上我们在 OSQP 里是按 l<=A x<=u 的形式构造：
+
+                # 上面 l2/u2 是给盒约束的两组；我们会和 A1 一起拼起来
+
+                # 为了和前面的写法一致，你也可以继续用你原来的 l2/u2 构造，只要 dtype 和稀疏转化正确即可
+
+                A_osqp = np.vstack([A1, A2]).astype(np.float64, copy=False)
+
+                A_osqp = sparse.csc_matrix(A_osqp)
+
+                l_osqp = np.hstack([l1, np.hstack([np.full((m,), u_min, dtype=np.float64),
+
+                                                   np.full((m,), -u_max, dtype=np.float64),
+
+                                                   np.array([0.0], dtype=np.float64)])])
+
+                u_osqp = np.hstack([u1, np.hstack([np.full((m,), u_max, dtype=np.float64),
+
+                                                   np.full((m,), -u_min, dtype=np.float64),
+
+                                                   np.array([np.inf], dtype=np.float64)])])
+
                 prob = osqp.OSQP()
-                prob.setup(P=P, q=q, A=A_osqp, l=l_osqp, u=u_osqp, verbose=False, eps_abs=1e-5, eps_rel=1e-5, max_iter=8000)
+
+                prob.setup(P=P, q=q, A=A_osqp, l=l_osqp, u=u_osqp,
+
+                           verbose=False, eps_abs=1e-5, eps_rel=1e-5, max_iter=8000, polish=True)
+
                 res = prob.solve()
-                x = res.x if res.info.status_val in (1,2) else np.hstack([ui,0.0])
+
+                x = res.x if res.info.status_val in (1, 2) else np.hstack([ui64, 0.0])
+
                 sol = x[:m]
+
             out[bi,i] = torch.from_numpy(sol).to(u_nom.device)
     return out
