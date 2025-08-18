@@ -1,0 +1,12 @@
+# Python 3.9–3.11 均可
+numpy>=1.24
+scipy>=1.10
+tqdm>=4.66
+
+# PyTorch —— 默认安装 CPU 轮子；若要 CUDA 见下面“GPU 安装说明”
+torch>=2.2
+
+# QP 求解器：代码会“优先 ProxQP，失败则回退 OSQP”
+osqp>=0.6.2
+# proxsuite（ProxQP）是可选项；若你本机装不动可删除下一行，程序会自动用 OSQP
+proxsuite>=0.6.4
